@@ -1,0 +1,309 @@
+# Hướng dẫn chi tiết AWS Academy Lab Project - Cloud Security Builder
+
+## 1. Giới thiệu tổng quan dự án
+
+Dự án này giúp bạn thực hành các kỹ năng bảo mật trên AWS, bao gồm:
+- Bảo mật truy cập vào Amazon S3
+- Bảo mật truy cập mạng (VPC)
+- Mã hóa dữ liệu với AWS KMS
+- Giám sát và ghi log với CloudWatch, CloudTrail, AWS Config
+
+Bạn sẽ thực hiện từng bước, mỗi bước đều có giải thích lý thuyết, lý do thực hiện và hướng dẫn chi tiết. Cuối cùng, bạn sẽ có thể viết báo cáo theo form mẫu.
+
+---
+
+## 2. Nội dung chi tiết từng phần
+
+### PHASE 1: Bảo mật dữ liệu trên Amazon S3
+
+
+#### 1.1. Tạo bucket, áp dụng bucket policy và kiểm tra truy cập
+**Lý thuyết:**
+- Amazon S3 là dịch vụ lưu trữ đối tượng, cho phép lưu trữ và truy xuất dữ liệu mọi lúc, mọi nơi.
+- Bucket là "thùng chứa" các object (file, ảnh, video...).
+**Tại sao cần bảo mật bucket?**
+- Nếu không giới hạn truy cập, dữ liệu có thể bị rò rỉ ra ngoài.
+**Các bước thực hiện:**
+1. Đăng nhập AWS Console, vào S3, chọn "Create bucket". Đặt tên, chọn region, giữ các thiết lập mặc định.
+2. Sau khi tạo, vào tab "Permissions" > "Bucket Policy". Thêm policy chỉ cho phép user/role cụ thể truy cập. Ví dụ:
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Principal": {"AWS": "arn:aws:iam::[AccountID]:user/[UserName]"},
+      "Action": "s3:*",
+      "Resource": [
+        "arn:aws:s3:::your-bucket-name",
+        "arn:aws:s3:::your-bucket-name/*"
+      ]
+    }
+  ]
+}
+```
+3. Đăng nhập bằng user khác để kiểm tra: nếu không có quyền sẽ bị từ chối truy cập.
+**Lưu ý:**
+- Không nên public bucket trừ khi thực sự cần thiết.
+
+#### 1.2. Bật versioning và object-level logging
+**Lý thuyết:**
+- Versioning giúp lưu nhiều phiên bản của object, tránh mất dữ liệu khi ghi đè/xóa nhầm.
+- Object-level logging ghi lại mọi thao tác với từng object (ai, lúc nào, làm gì).
+**Các bước thực hiện:**
+1. Vào bucket > Properties > Versioning > Enable.
+2. Để bật object-level logging: Vào CloudTrail > chọn trail > Data events > Add S3 bucket > chọn bucket cần log.
+**Kiểm tra:**
+- Tải lên/xóa object, kiểm tra có nhiều version và log ghi nhận thao tác.
+
+#### 1.3. Bật S3 Inventory
+**Lý thuyết:**
+- S3 Inventory tạo báo cáo định kỳ về các object trong bucket (tên, trạng thái mã hóa, version...)
+**Các bước thực hiện:**
+1. Vào bucket > Management > Inventory > Create inventory configuration.
+2. Chọn output bucket, định kỳ, định dạng file (CSV/ORC/Parquet).
+**Kiểm tra:**
+- Sau 1 ngày, kiểm tra bucket output sẽ thấy file inventory.
+
+#### 1.4. Kiểm tra versioning
+**Các bước thực hiện:**
+1. Tải lên 1 file, sửa file rồi upload lại, xóa file.
+2. Vào bucket, chọn object, xem tab "Versions" để thấy các phiên bản.
+
+#### 1.5. Kiểm tra object-level logging và truy vấn log bằng Athena
+**Lý thuyết:**
+- Athena cho phép truy vấn log lưu trên S3 bằng SQL.
+**Các bước thực hiện:**
+1. Vào CloudTrail, xác nhận đã bật log data events cho S3.
+2. Vào Athena, tạo database/table trỏ tới S3 log bucket.
+3. Chạy truy vấn ví dụ:
+```sql
+SELECT eventTime, eventName, userIdentity.userName, requestParameters.key
+FROM cloudtrail_logs
+WHERE eventName = 'DeleteObject';
+```
+**Kiểm tra:**
+- Xem ai đã xóa file nào, khi nào.
+
+#### Đánh giá chi phí bảo mật S3
+**Lý thuyết:**
+- Bật versioning, logging, inventory sẽ phát sinh thêm chi phí lưu trữ và truy vấn log.
+**Cách làm:**
+1. Vào https://calculator.aws.amazon.com/ để ước tính chi phí dựa trên số lượng object, dung lượng log, số lần truy vấn.
+
+---
+
+### PHASE 2: Bảo mật VPC
+
+
+#### 2.1. Xem lại LabVPC và các tài nguyên liên quan
+**Lý thuyết:**
+- VPC (Virtual Private Cloud) là mạng ảo riêng biệt trên AWS, cho phép bạn kiểm soát IP, subnet, route, firewall.
+**Tại sao cần VPC?**
+- Đảm bảo tài nguyên không bị truy cập trái phép, cô lập môi trường, kiểm soát luồng dữ liệu.
+**Các bước thực hiện:**
+1. Đăng nhập AWS Console tại https://console.aws.amazon.com/.
+2. Ở thanh tìm kiếm trên cùng, gõ "VPC" rồi nhấn Enter.
+3. Trong menu bên trái, chọn "Your VPCs" để xem danh sách VPC.
+4. Tìm VPC tên "LabVPC" (hoặc tên bạn đặt khi tạo), click vào tên VPC để vào trang chi tiết.
+5. Ở phần "Details", ghi lại VPC ID, IPv4 CIDR, trạng thái, region.
+6. Ở menu bên trái, chọn "Subnets". Lọc theo VPC ID vừa ghi, kiểm tra các subnet (Public, Private), ghi lại tên, CIDR block, AZ.
+7. Chọn từng subnet, ở phần dưới cùng sẽ thấy "Route Table" liên kết. Click vào ID route table để chuyển sang bước tiếp.
+8. Ở "Route Tables", kiểm tra các route (ví dụ: Destination 0.0.0.0/0, Target igw-xxxx). Chụp màn hình bảng route.
+9. Ở menu bên trái, chọn "Internet Gateways". Tìm IGW đã attach vào VPC, click vào IGW, kiểm tra tab "Attached VPCs".
+10. Nếu có subnet private, vào "NAT Gateways" kiểm tra NAT đã gán subnet nào, trạng thái, Elastic IP.
+11. Ở menu bên trái, chọn "Security Groups". Lọc theo VPC ID, chọn từng group, kiểm tra tab "Inbound rules" và "Outbound rules". Ghi lại rule quan trọng (ví dụ: cho phép SSH từ IP nào, HTTP từ đâu).
+12. Ở menu bên trái, chọn "Network ACLs". Lọc theo VPC ID, chọn NACL, kiểm tra tab "Inbound rules" và "Outbound rules". Ghi lại rule, chụp màn hình.
+**Lưu ý:**
+- Vẽ sơ đồ VPC (có thể dùng draw.io hoặc AWS Diagram), chụp màn hình từng tab để minh họa. Đặt tên file ảnh rõ ràng (vd: vpc-subnet.png, vpc-route-table.png).
+
+#### 2.2. Tạo VPC Flow Log
+**Lý thuyết:**
+- VPC Flow Log ghi lại traffic vào/ra VPC, subnet hoặc ENI (Elastic Network Interface).
+**Tại sao cần Flow Log?**
+- Phát hiện truy cập bất thường, điều tra sự cố bảo mật.
+**Các bước thực hiện:**
+1. Ở menu bên trái, chọn "Your VPCs", tick chọn VPC cần tạo log.
+2. Ở phần dưới cùng, chọn tab "Flow Logs".
+3. Nhấn nút "Create flow log" (góc phải trên tab Flow Logs).
+4. Ở mục "Filter", chọn "All" để log cả accepted và rejected traffic.
+5. Ở mục "Destination", chọn "Send to CloudWatch Logs".
+6. Ở mục "Log group", nhấn "Create new log group" (nếu chưa có), đặt tên ví dụ: /aws/vpc/flowlogs.
+7. Ở mục "IAM role", chọn role có quyền ghi log vào CloudWatch. Nếu chưa có, nhấn "Set up permissions" để AWS tự tạo role.
+8. Nhấn nút "Create flow log" để hoàn tất.
+9. Để xem log: Vào dịch vụ "CloudWatch" > "Logs" > chọn log group vừa tạo > chọn log stream theo thời gian.
+**Kiểm tra:**
+- Thực hiện ping, SSH, HTTP vào EC2, sau đó vào CloudWatch Logs kiểm tra log có ghi nhận traffic (tìm theo thời gian, IP nguồn/đích, action ACCEPT/REJECT).
+
+#### 2.3. Truy cập WebServer từ internet và xem log
+**Các bước thực hành:**
+1. Ở menu bên trái, chọn "Instances" (trong EC2 Dashboard).
+2. Tìm instance WebServer, tick chọn, ở phần dưới cùng ghi lại "Public IPv4 address".
+3. Mở trình duyệt, nhập http://[PublicIP] để kiểm tra truy cập web (nên dùng chế độ ẩn danh để kiểm tra cache).
+4. Để SSH: mở terminal, chạy lệnh:
+  ```bash
+  ssh ec2-user@[PublicIP] -i /path/to/key.pem
+  ```
+  (thay /path/to/key.pem bằng đường dẫn file key của bạn)
+5. Nếu truy cập thành công, chụp màn hình trình duyệt hoặc terminal.
+6. Vào AWS Console > tìm "CloudWatch" > chọn "Logs" > chọn log group flow log > chọn log stream theo thời gian truy cập.
+7. Tìm dòng log có srcaddr là IP của bạn, dstaddr là IP EC2, kiểm tra action (ACCEPT/REJECT), protocol (TCP), port (22 hoặc 80).
+**Lưu ý:**
+- Nếu không truy cập được, kiểm tra lại Security Group (có mở port 22, 80 cho IP của bạn chưa), Route Table (có route 0.0.0.0/0 -> IGW chưa), NACL (có deny không).
+
+#### 2.4. Cấu hình route table và security group
+**Lý thuyết:**
+- Route Table: xác định đường đi của traffic trong VPC.
+- Security Group: firewall cấp instance, kiểm soát port, protocol, IP nguồn.
+**Các bước thực hiện:**
+1. Ở menu bên trái, chọn "Route Tables".
+2. Tìm route table gán cho subnet public (có thể xem ở tab "Subnet associations").
+3. Tick chọn route table, ở phần dưới cùng chọn tab "Routes".
+4. Nhấn nút "Edit routes" > "Add route".
+5. Ở "Destination", nhập 0.0.0.0/0. Ở "Target", chọn Internet Gateway (igw-xxxx).
+6. Nhấn "Save changes" để lưu lại.
+7. Ở menu bên trái, chọn "Security Groups".
+8. Tìm security group gán cho WebServer, tick chọn, ở phần dưới cùng chọn tab "Inbound rules".
+9. Nhấn "Edit inbound rules" > "Add rule":
+  - Type: SSH, Port: 22, Source: My IP (hoặc dải IP cụ thể)
+  - Type: HTTP, Port: 80, Source: Anywhere (0.0.0.0/0) hoặc IP cụ thể
+10. Nhấn "Save rules" để lưu lại.
+**Kiểm tra:**
+- Thử SSH, HTTP vào EC2 từ IP được phép (thành công) và từ IP không được phép (bị từ chối). Chụp màn hình kết quả.
+
+#### 2.5. Bảo vệ subnet bằng NACL
+**Lý thuyết:**
+- NACL (Network ACL): firewall cấp subnet, kiểm soát traffic vào/ra subnet, áp dụng cho toàn bộ EC2 trong subnet.
+**Các bước thực hiện:**
+1. Ở menu bên trái, chọn "Network ACLs".
+2. Tìm NACL gán cho subnet public (có thể xem ở tab "Subnet associations").
+3. Tick chọn NACL, ở phần dưới cùng chọn tab "Inbound rules".
+4. Nhấn "Edit inbound rules" > "Add rule":
+  - Rule #: 100, Type: HTTP, Protocol: TCP, Port range: 80, Source: 0.0.0.0/0, Allow
+  - Rule #: 110, Type: SSH, Protocol: TCP, Port range: 22, Source: [IP của bạn], Allow
+  - Rule #: 200, Type: ALL Traffic, Source: 0.0.0.0/0, Deny
+5. Nhấn "Save changes" để lưu lại.
+6. Chuyển sang tab "Outbound rules", nhấn "Edit outbound rules" > "Add rule":
+  - Rule #: 100, Type: ALL Traffic, Destination: 0.0.0.0/0, Allow
+7. Nhấn "Save changes" để lưu lại.
+**Kiểm tra:**
+- Thử truy cập EC2 từ IP bị deny (bị chặn) và từ IP allow (truy cập được). Chụp màn hình kết quả.
+**Lưu ý:**
+- NACL áp dụng theo thứ tự rule (từ nhỏ đến lớn), rule đầu tiên khớp sẽ được áp dụng. Nếu deny all ở rule 200 thì mọi traffic không match rule nhỏ hơn sẽ bị chặn.
+
+#### 2.6. Xem lại NetworkFirewallVPC
+**Lý thuyết:**
+- AWS Network Firewall là firewall nâng cao, kiểm soát traffic chi tiết hơn NACL/SG, hỗ trợ rule theo domain, URL, IPS/IDS.
+**Các bước thực hiện:**
+1. Ở menu bên trái, chọn "Network Firewall" > "Firewalls".
+2. Xem danh sách firewall đã tạo, tick chọn firewall cần kiểm tra.
+3. Ở phần dưới cùng, xem các tab "Endpoints", "Policy", "Rule groups".
+4. Ở tab "Endpoints": kiểm tra subnet, trạng thái endpoint.
+5. Ở tab "Policy": kiểm tra policy gán cho firewall, click vào policy để xem chi tiết.
+6. Ở tab "Rule groups": kiểm tra các rule group (stateless, stateful), click vào từng rule group để xem rule cụ thể.
+
+#### 2.7-2.10. Tạo firewall, route table, logging, policy và kiểm tra
+**Các bước thực hiện:**
+1. Ở menu bên trái, chọn "Network Firewall" > "Firewalls" > nhấn nút "Create firewall".
+2. Nhập tên firewall, chọn VPC, chọn subnet (nên tạo subnet riêng cho firewall endpoint, ví dụ: 10.0.3.0/24).
+3. Nhấn "Create firewall" để hoàn tất.
+4. Sau khi tạo xong, ở phần dưới cùng chọn tab "Rule groups" > nhấn "Create rule group".
+5. Chọn loại rule group: Stateless hoặc Stateful.
+6. Nhập tên, thêm rule (ví dụ: chặn domain xấu, chặn IP, cho phép port 80, 443). Nhấn "Create rule group".
+7. Chuyển sang tab "Policies" > nhấn "Create firewall policy".
+8. Nhập tên policy, gán rule group vừa tạo vào policy, nhấn "Create policy".
+9. Quay lại firewall, ở tab "Policy" nhấn "Associate policy", chọn policy vừa tạo.
+10. Ở menu bên trái, chọn "Route Tables", chọn bảng route của subnet public/private, nhấn "Edit routes" > "Add route" > Target: firewall endpoint.
+11. Nhấn "Save changes" để lưu lại.
+12. Ở tab "Logging" của firewall, nhấn "Enable logging", chọn CloudWatch Logs hoặc S3, nhập log group/bucket.
+**Kiểm tra:**
+- Truy cập thử các website/IP bị chặn/cho phép, kiểm tra log firewall ghi nhận sự kiện. Chụp màn hình log.
+
+#### Đánh giá chi phí bảo mật VPC
+**Các bước thực hiện:**
+1. Truy cập https://calculator.aws.amazon.com/.
+2. Nhấn "Create estimate".
+3. Ở ô tìm kiếm, nhập "VPC", "Network Firewall", "CloudWatch Logs" rồi nhấn "Add to my estimate" cho từng dịch vụ.
+4. Nhập số lượng VPC, firewall endpoint, dung lượng log lưu trữ, số request theo thực tế lab.
+5. Nhấn "Export" để tải file PDF hoặc chụp màn hình bảng giá.
+6. Đưa ảnh hoặc file này vào phần báo cáo chi phí.
+
+---
+
+### PHASE 3: Bảo mật tài nguyên với AWS KMS
+
+#### 3.1. Tạo customer managed key, bật key rotation
+- **AWS KMS là gì?**
+  - Dịch vụ quản lý khóa mã hóa (Key Management Service).
+- **Tại sao cần KMS?**
+  - Mã hóa dữ liệu, quản lý khóa an toàn, tuân thủ bảo mật.
+- **Cách thực hiện:**
+  1. Vào KMS > Create key > chọn loại key, bật rotation.
+
+#### 3.2. Cập nhật key policy, phân tích IAM policy
+- **Key policy:** kiểm soát ai được dùng key.
+- **IAM policy:** kiểm soát quyền truy cập AWS resource.
+
+#### 3.3. Mã hóa S3 bằng KMS
+- Chọn S3 bucket > Properties > Default encryption > AWS KMS key.
+
+#### 3.4. Mã hóa EBS volume EC2
+- Khi tạo EC2, chọn mã hóa EBS bằng KMS key.
+
+#### 3.5. Envelope encryption
+- **Envelope encryption:** mã hóa dữ liệu bằng data key, data key được mã hóa bằng KMS key.
+
+#### 3.6. Mã hóa Secrets Manager secret
+- Khi tạo secret, chọn KMS key để mã hóa.
+
+#### Đánh giá chi phí sử dụng KMS
+- Ước tính chi phí tạo key, sử dụng key, mã hóa dữ liệu.
+
+---
+
+### PHASE 4: Giám sát và ghi log
+
+#### 4.1. Dùng CloudTrail ghi lại API call S3
+- **CloudTrail:** ghi lại mọi API call trên AWS.
+
+#### 4.2. Dùng CloudWatch Logs giám sát log
+- **CloudWatch Logs:** lưu trữ, tìm kiếm, cảnh báo log.
+
+#### 4.3. Tạo CloudWatch alarm gửi thông báo sự cố
+- Tạo alarm khi có sự kiện bất thường (ví dụ: nhiều lần login fail).
+
+#### 4.4. Dùng AWS Config đánh giá và tự động sửa cấu hình
+- **AWS Config:** ghi lại, đánh giá, tự động sửa cấu hình resource.
+
+#### Đánh giá chi phí monitoring & logging
+- Ước tính chi phí CloudTrail, CloudWatch, AWS Config.
+
+---
+
+## 3. Hướng dẫn viết báo cáo theo form mẫu
+
+### 1. Mở đầu
+- Giới thiệu mục tiêu, phạm vi, ý nghĩa dự án.
+
+### 2. Nội dung thực hiện
+- Chia theo từng phase, mỗi phase mô tả:
+  - Mục tiêu
+  - Lý thuyết liên quan
+  - Các bước thực hiện (ảnh chụp màn hình, mô tả thao tác)
+  - Kết quả kiểm tra
+  - Đánh giá chi phí
+
+### 3. Kết luận
+- Tổng kết bài học, kinh nghiệm, đề xuất cải tiến.
+
+---
+
+## 4. Lưu ý khi làm báo cáo
+- Chụp ảnh màn hình từng bước quan trọng.
+- Giải thích rõ lý do, lý thuyết mỗi thao tác.
+- Đánh giá chi phí thực tế (dùng AWS Pricing Calculator).
+- Trình bày rõ ràng, mạch lạc, đúng form mẫu.
+
+---
+
+**Chúc bạn hoàn thành tốt dự án!**
